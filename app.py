@@ -4,6 +4,7 @@ import websocket
 import json
 import os
 import time
+import requests
 from datetime import datetime, timezone
 
 app = Flask(__name__)
@@ -29,22 +30,26 @@ def now_utc():
 
 def set_status(status, error=None, raw=None):
     global latest_price
+
     with price_lock:
         latest_price["status"] = status
         latest_price["updated_at"] = now_utc()
+
         if error is not None:
             latest_price["error"] = str(error)
+
         if raw is not None:
             latest_price["raw"] = raw
 
 
-def update_latest_price(price, raw=None):
+def update_latest_price(price, raw=None, source="twelvedata.com"):
     global latest_price
+
     with price_lock:
         latest_price = {
             "symbol": SYMBOL,
-            "price": price,
-            "source": "twelvedata.com",
+            "price": str(price) if price is not None else None,
+            "source": source,
             "status": "ok",
             "updated_at": now_utc(),
             "raw": raw
@@ -71,13 +76,14 @@ def on_message(ws, message):
         data = json.loads(message)
         print(data, flush=True)
 
-        # Twelve Data may send system/status messages without price.
         price = data.get("price")
 
         if price is not None:
-            update_latest_price(price, data)
+            update_latest_price(price, data, source="twelvedata_websocket")
+
         elif data.get("event") in ["subscribe-status", "heartbeat"]:
             set_status("waiting_for_price", raw=data)
+
         elif data.get("status") == "error":
             set_status("error", error=data.get("message", data), raw=data)
 
@@ -93,12 +99,18 @@ def on_error(ws, error):
 
 def on_close(ws, close_status_code, close_msg):
     print("WebSocket closed", close_status_code, close_msg, flush=True)
-    set_status("closed", raw={"code": close_status_code, "message": close_msg})
+    set_status("closed", raw={
+        "code": close_status_code,
+        "message": close_msg
+    })
 
 
 def websocket_worker():
     if not TWELVE_API_KEY:
-        set_status("missing_api_key", error="Add TWELVE_API_KEY in Render Environment Variables")
+        set_status(
+            "missing_api_key",
+            error="Add TWELVE_API_KEY in Render Environment Variables"
+        )
         return
 
     while True:
@@ -113,7 +125,10 @@ def websocket_worker():
                 on_close=on_close
             )
 
-            ws.run_forever(ping_interval=20, ping_timeout=10)
+            ws.run_forever(
+                ping_interval=20,
+                ping_timeout=10
+            )
 
         except Exception as e:
             print(f"WebSocket worker error: {e}", flush=True)
@@ -127,6 +142,7 @@ def home():
     return jsonify({
         "message": "Gold price server is running",
         "price_endpoint": "/price",
+        "price_now_endpoint": "/price-now",
         "live_page": "/live",
         "stream_endpoint": "/stream",
         "source": "Twelve Data WebSocket",
@@ -136,8 +152,85 @@ def home():
 
 @app.route("/price")
 def price():
+    """
+    هذا يرجع آخر سعر محفوظ من WebSocket.
+    استخدمه مع ESP32 لأنه لا يستهلك API REST.
+    """
     with price_lock:
         return jsonify(latest_price)
+
+
+@app.route("/price-now")
+def price_now():
+    """
+    هذا يجلب السعر مباشرة من Twelve Data REST عند كل طلب.
+    لا تستخدمه كل ثانية على الخطة المجانية حتى لا يظهر خطأ 429.
+    """
+    if not TWELVE_API_KEY:
+        return jsonify({
+            "symbol": SYMBOL,
+            "price": None,
+            "source": "twelvedata_rest",
+            "status": "missing_api_key",
+            "error": "Add TWELVE_API_KEY in Render Environment Variables",
+            "updated_at": now_utc()
+        }), 500
+
+    try:
+        url = "https://api.twelvedata.com/price"
+
+        params = {
+            "symbol": SYMBOL,
+            "apikey": TWELVE_API_KEY
+        }
+
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("status") == "error":
+            return jsonify({
+                "symbol": SYMBOL,
+                "price": None,
+                "source": "twelvedata_rest",
+                "status": "error",
+                "error": data.get("message"),
+                "raw": data,
+                "updated_at": now_utc()
+            }), 429 if data.get("code") == 429 else 500
+
+        price_value = data.get("price")
+
+        if price_value is not None:
+            update_latest_price(
+                price_value,
+                raw=data,
+                source="twelvedata_rest"
+            )
+
+        return jsonify({
+            "symbol": SYMBOL,
+            "price": str(price_value) if price_value is not None else None,
+            "source": "twelvedata_rest",
+            "status": "ok" if price_value is not None else "no_price",
+            "raw": data,
+            "updated_at": now_utc()
+        })
+
+    except Exception as e:
+        return jsonify({
+            "symbol": SYMBOL,
+            "price": None,
+            "source": "twelvedata_rest",
+            "status": "error",
+            "error": str(e),
+            "updated_at": now_utc()
+        }), 500
 
 
 @app.route("/stream")
@@ -146,6 +239,7 @@ def stream():
         while True:
             with price_lock:
                 data = dict(latest_price)
+
             yield f"data: {json.dumps(data)}\n\n"
             time.sleep(1)
 
@@ -220,6 +314,7 @@ def live():
 
         source.onmessage = function(event) {
             const data = JSON.parse(event.data);
+
             symbolEl.textContent = data.symbol || "XAU/USD";
 
             if (data.price !== null && data.price !== undefined) {
