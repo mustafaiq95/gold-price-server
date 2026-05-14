@@ -1,26 +1,38 @@
-# Gold Price Server
+# Gold Price Server - Twelve Data
 
-Simple Flask API that reads XAUUSD price from TradingView's scanner endpoint and exposes it at:
+Flask server for live XAU/USD price using Twelve Data WebSocket.
 
-```txt
-/price
-```
+## Render settings
 
-## Run locally
+Build Command:
 
 ```bash
 pip install -r requirements.txt
-python app.py
 ```
 
-Open:
-
-```txt
-http://localhost:8080/price
-```
-
-## Deploy to Google Cloud Run
+Start Command:
 
 ```bash
-gcloud run deploy gold-price-server --source . --region us-central1 --allow-unauthenticated
+gunicorn app:app
 ```
+
+## Environment Variables
+
+Add this in Render:
+
+```text
+TWELVE_API_KEY=your_twelve_data_api_key
+```
+
+Optional:
+
+```text
+SYMBOL=XAU/USD
+```
+
+## Endpoints
+
+- `/` status
+- `/price` latest price as JSON
+- `/live` live browser page
+- `/stream` server-sent events stream
