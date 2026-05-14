@@ -72,7 +72,7 @@ def fetch_gold_price():
             gold_price["error"] = str(e)
             print(f"Error fetching TradingView price: {e}", flush=True)
 
-        time.sleep(60)
+        time.sleep(1)
 
 
 @app.route("/", methods=["GET"])
