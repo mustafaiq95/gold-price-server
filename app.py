@@ -60,7 +60,7 @@ def fetch_gold_price():
                     "status": "ok",
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
-                print(f"Updated gold price from TradingView: {price}", flush=True)
+                print(f"{datetime.now(timezone.utc).isoformat()} - Updated gold price from TradingView: {price}", flush=True)
             else:
                 gold_price["status"] = "price_not_found"
                 gold_price["error"] = "TradingView response did not include close price"
