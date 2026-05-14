@@ -119,7 +119,7 @@ def websocket_worker():
             print(f"WebSocket worker error: {e}", flush=True)
             set_status("worker_error", error=e)
 
-        time.sleep(5)
+        time.sleep(1)
 
 
 @app.route("/")
